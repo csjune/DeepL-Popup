@@ -1,0 +1,16 @@
+# Rust build output
+/target/
+*.pdb
+
+# Scratch files (icon generation drafts, etc.)
+/tmp/
+
+# Local agent/tool state
+/.agents/
+/.codex/
+
+# OS / editor
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
