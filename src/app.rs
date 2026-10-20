@@ -587,6 +587,8 @@ impl App {
     pub fn apply_theme(&self) {
         if let Some(tray) = self.tray.upgrade() {
             let dark_taskbar = windows_integration::windows_system_dark_mode();
+            // The tray menu belongs to the taskbar, so it follows the taskbar theme.
+            windows_integration::set_menu_dark_mode(dark_taskbar);
             if tray.get_dark_taskbar() != dark_taskbar {
                 tray.set_dark_taskbar(dark_taskbar);
             }

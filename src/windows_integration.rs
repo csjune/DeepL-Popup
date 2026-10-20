@@ -42,6 +42,7 @@ mod platform {
         CloseClipboard, EmptyClipboard, GetClipboardData, GetClipboardSequenceNumber,
         OpenClipboard, SetClipboardData,
     };
+    use windows::Win32::System::LibraryLoader::{GetProcAddress, LoadLibraryW};
     use windows::Win32::System::Memory::{
         GMEM_MOVEABLE, GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock,
     };
@@ -67,7 +68,7 @@ mod platform {
         GetWindowThreadProcessId, HWND_MESSAGE, IsWindow, MSG, PostMessageW, PostThreadMessageW,
         SM_CXSMICON, SetForegroundWindow, WM_APP, WM_HOTKEY, WM_QUIT, WM_RBUTTONUP,
     };
-    use windows::core::{PCWSTR, w};
+    use windows::core::{PCSTR, PCWSTR, w};
 
     use super::{PopupAnchor, SelectionCapture, WorkArea};
     use crate::messages::Message;
@@ -96,6 +97,30 @@ mod platform {
     /// Whether the taskbar and tray use the dark theme. It can differ from the app theme.
     pub fn windows_system_dark_mode() -> bool {
         personalize_value_is_zero(w!("SystemUsesLightTheme"))
+    }
+
+    /// Makes native menus, such as the tray menu, dark or light. Windows has no
+    /// public API for this; Explorer and Notepad use uxtheme's unnamed exports
+    /// SetPreferredAppMode (ordinal 135) and FlushMenuThemes (ordinal 136).
+    pub fn set_menu_dark_mode(dark: bool) {
+        type SetPreferredAppMode = unsafe extern "system" fn(i32) -> i32;
+        type FlushMenuThemes = unsafe extern "system" fn();
+        const FORCE_DARK: i32 = 2;
+        const FORCE_LIGHT: i32 = 3;
+
+        let Ok(uxtheme) = (unsafe { LoadLibraryW(w!("uxtheme.dll")) }) else {
+            return;
+        };
+        unsafe {
+            if let Some(export) = GetProcAddress(uxtheme, PCSTR(135 as *const u8)) {
+                let set_preferred_app_mode: SetPreferredAppMode = mem::transmute(export);
+                set_preferred_app_mode(if dark { FORCE_DARK } else { FORCE_LIGHT });
+            }
+            if let Some(export) = GetProcAddress(uxtheme, PCSTR(136 as *const u8)) {
+                let flush_menu_themes: FlushMenuThemes = mem::transmute(export);
+                flush_menu_themes();
+            }
+        }
     }
 
     fn personalize_value_is_zero(name: PCWSTR) -> bool {
@@ -758,6 +783,8 @@ mod platform {
         false
     }
 
+    pub fn set_menu_dark_mode(_dark: bool) {}
+
     pub fn watch_theme_changes<F>(_on_change: F)
     where
         F: Fn() + Send + 'static,
@@ -779,8 +806,8 @@ mod platform {
 
 pub use platform::{
     bring_to_foreground, copy_text, current_anchor, cursor_is_in_rect, launch_at_startup,
-    left_button_down, replace_selected_text, set_launch_at_startup, show_tray_menu,
-    small_icon_size, start_hotkey_listener, trim_working_set, watch_theme_changes,
+    left_button_down, replace_selected_text, set_launch_at_startup, set_menu_dark_mode,
+    show_tray_menu, small_icon_size, start_hotkey_listener, trim_working_set, watch_theme_changes,
     windows_app_dark_mode, windows_system_dark_mode,
 };
 
