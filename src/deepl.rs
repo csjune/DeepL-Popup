@@ -7,6 +7,7 @@ use reqwest::header::AUTHORIZATION;
 use serde::{Deserialize, Serialize};
 
 use crate::languages::TargetLanguage;
+use crate::messages::Message;
 
 const FREE_API_BASE: &str = "https://api-free.deepl.com";
 const PRO_API_BASE: &str = "https://api.deepl.com";
@@ -31,12 +32,10 @@ pub enum TranslateError {
     InvalidResponse,
 }
 
-pub const TRANSLATE_ERROR_TITLE: &str = "텍스트를 번역할 수 없습니다";
-
 /// How an error is presented in the popup: a title, a description and whether
 /// the fix is in the settings window.
 pub struct ErrorPresentation {
-    pub title: &'static str,
+    pub title: String,
     pub description: String,
     pub needs_settings: bool,
 }
@@ -46,56 +45,41 @@ impl TranslateError {
         let (title, needs_settings) = match self {
             Self::Api {
                 status: 401 | 403, ..
-            } => ("DeepL API 인증 키를 확인하세요", true),
-            Self::Api { status: 456, .. } => ("DeepL API 사용 한도에 도달했습니다", false),
-            _ => (TRANSLATE_ERROR_TITLE, false),
+            } => (Message::CheckApiKeyTitle, true),
+            Self::Api { status: 456, .. } => (Message::QuotaReachedTitle, false),
+            _ => (Message::TranslateFailedTitle, false),
         };
         ErrorPresentation {
-            title,
+            title: title.text(),
             description: self.to_string(),
             needs_settings,
+        }
+    }
+
+    fn message(&self) -> Message {
+        match self {
+            Self::EmptyText => Message::NoSelectedText,
+            Self::TextTooLarge => Message::TextTooLong,
+            Self::Request(message) => Message::ConnectionFailed {
+                message: message.clone(),
+            },
+            Self::Api { status, message } => match *status {
+                401 | 403 => Message::InvalidApiKey,
+                429 => Message::TooManyRequests,
+                456 => Message::QuotaExceeded,
+                status => Message::ServerError {
+                    status,
+                    message: message.clone(),
+                },
+            },
+            Self::InvalidResponse => Message::UnreadableResponse,
         }
     }
 }
 
 impl fmt::Display for TranslateError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::EmptyText => write!(formatter, "선택한 텍스트가 없습니다."),
-            Self::TextTooLarge => write!(
-                formatter,
-                "선택한 텍스트가 너무 깁니다. 더 짧게 나눠서 번역하세요."
-            ),
-            Self::Request(message) => write!(
-                formatter,
-                "DeepL에 연결하지 못했습니다. 나중에 다시 시도하세요. ({message})"
-            ),
-            Self::Api { status, message } => match *status {
-                401 | 403 => write!(
-                    formatter,
-                    "설정에서 인증 키와 API 플랜(Free/Pro)이 맞는지 확인하세요."
-                ),
-                429 => write!(
-                    formatter,
-                    "단기간에 너무 많은 요청을 보냈습니다. 몇 분 후에 다시 시도하세요."
-                ),
-                456 => write!(
-                    formatter,
-                    "이번 결제 주기의 DeepL API 사용량을 모두 사용했습니다."
-                ),
-                _ if message.is_empty() => {
-                    write!(formatter, "나중에 다시 시도하세요. (HTTP {status})")
-                }
-                _ => write!(
-                    formatter,
-                    "나중에 다시 시도하세요. ({message}, HTTP {status})"
-                ),
-            },
-            Self::InvalidResponse => write!(
-                formatter,
-                "DeepL 응답을 읽지 못했습니다. 나중에 다시 시도하세요."
-            ),
-        }
+        formatter.write_str(&self.message().text())
     }
 }
 

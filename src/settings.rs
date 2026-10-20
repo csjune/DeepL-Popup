@@ -4,7 +4,9 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::i18n::InterfaceLanguage;
 use crate::languages::TargetLanguage;
+use crate::messages::Message;
 
 const APP_DIRECTORY: &str = "DeepL Popup";
 const SETTINGS_FILE: &str = "settings.json";
@@ -18,6 +20,7 @@ pub struct Preferences {
     pub suggested_languages: Vec<String>,
     /// The last language list received from DeepL, so it is complete at startup.
     pub target_languages: Vec<TargetLanguage>,
+    pub interface_language: InterfaceLanguage,
     // Fields written by earlier versions, read once to migrate to `suggested_languages`.
     #[serde(skip_serializing)]
     auto_target: Option<bool>,
@@ -45,6 +48,7 @@ impl Preferences {
             use_free_api,
             suggested_languages,
             target_languages,
+            interface_language: InterfaceLanguage::default(),
             auto_target: None,
             target_language_code: None,
             preferred_language_code: None,
@@ -90,12 +94,25 @@ impl Preferences {
     pub fn save(&self) -> Result<(), String> {
         let path = settings_path();
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| format!("Failed to create the settings folder: {error}"))?;
+            fs::create_dir_all(parent).map_err(|error| {
+                Message::SettingsFolderFailed {
+                    error: error.to_string(),
+                }
+                .text()
+            })?;
         }
-        let contents = serde_json::to_vec_pretty(self)
-            .map_err(|error| format!("Failed to serialize settings: {error}"))?;
-        fs::write(path, contents).map_err(|error| format!("Failed to save settings: {error}"))
+        let contents = serde_json::to_vec_pretty(self).map_err(|error| {
+            Message::SettingsSerializeFailed {
+                error: error.to_string(),
+            }
+            .text()
+        })?;
+        fs::write(path, contents).map_err(|error| {
+            Message::SettingsSaveFailed {
+                error: error.to_string(),
+            }
+            .text()
+        })
     }
 }
 
@@ -136,6 +153,8 @@ mod credential_store {
     };
     use windows::core::{PCWSTR, PWSTR};
 
+    use crate::messages::Message;
+
     const TARGET_NAME: &str = "DeepL Popup/API Auth Key";
     const USER_NAME: &str = "DeepL Popup";
 
@@ -155,12 +174,13 @@ mod credential_store {
             if error.code() == ERROR_NOT_FOUND.to_hresult() {
                 return Ok(None);
             }
-            return Err(format!(
-                "Failed to read the API key from Windows Credential Manager: {error}"
-            ));
+            return Err(Message::ApiKeyReadFailed {
+                error: error.to_string(),
+            }
+            .text());
         }
         if credential.is_null() {
-            return Err("Windows Credential Manager returned an invalid credential.".to_owned());
+            return Err(Message::InvalidCredential.text());
         }
 
         let result = unsafe {
@@ -170,9 +190,7 @@ mod credential_store {
                     return Ok(None);
                 }
                 if credential_ref.CredentialBlob.is_null() {
-                    return Err(
-                        "The stored DeepL API key has an invalid credential blob.".to_owned()
-                    );
+                    return Err(Message::StoredApiKeyInvalid.text());
                 }
                 let bytes = slice::from_raw_parts(
                     credential_ref.CredentialBlob,
@@ -180,7 +198,7 @@ mod credential_store {
                 );
                 String::from_utf8(bytes.to_vec())
                     .map(Some)
-                    .map_err(|_| "The stored DeepL API key has an invalid format.".to_owned())
+                    .map_err(|_| Message::StoredApiKeyInvalid.text())
             })()
         };
 
@@ -209,7 +227,10 @@ mod credential_store {
         };
 
         unsafe { CredWriteW(&credential, 0) }.map_err(|error| {
-            format!("Failed to store the API key in Windows Credential Manager: {error}")
+            Message::ApiKeyStoreFailed {
+                error: error.to_string(),
+            }
+            .text()
         })
     }
 
@@ -220,12 +241,14 @@ mod credential_store {
 
 #[cfg(not(windows))]
 mod credential_store {
+    use crate::messages::Message;
+
     pub fn load() -> Result<Option<String>, String> {
         Ok(None)
     }
 
     pub fn save(_api_key: &str) -> Result<(), String> {
-        Err("API key storage is supported only on Windows.".to_owned())
+        Err(Message::ApiKeyStorageUnsupported.text())
     }
 }
 

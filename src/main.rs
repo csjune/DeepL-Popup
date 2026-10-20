@@ -2,7 +2,9 @@
 
 mod app;
 mod deepl;
+mod i18n;
 mod languages;
+mod messages;
 mod placement;
 mod settings;
 mod state;
@@ -41,6 +43,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     settings_window.set_version(version.clone());
     tray.set_version(version);
 
+    // The language comes first so every message after this is in it.
+    let preferences = Preferences::load();
+    i18n::set(preferences.interface_language.resolve());
+
     let api_key_result = settings::load_api_key();
     let state = AppState::new(
         api_key_result
@@ -48,13 +54,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .ok()
             .and_then(Clone::clone)
             .unwrap_or_default(),
-        Preferences::load(),
+        preferences,
         windows_integration::current_anchor(),
     );
     let app = App::new(&popup, &settings_window, &tray, state);
     app.apply_theme();
-    app.refresh_language_ui();
-    popup.set_placeholder_text(app::PLACEHOLDER_TEXT.into());
+    app.apply_interface_language(i18n::current());
     if let Err(error) = api_key_result {
         settings_window.set_message(error.into());
     }
@@ -76,7 +81,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hotkey_listener = match hotkey_listener {
         Ok(listener) => Some(listener),
         Err(error) => {
-            app.show_error("단축키를 사용할 수 없습니다", &error, false);
+            app.show_error(
+                &messages::Message::HotkeyUnavailableTitle.text(),
+                &error,
+                false,
+            );
             app.show_popup(windows_integration::current_anchor());
             None
         }
@@ -166,8 +175,13 @@ fn connect_settings(settings_window: &SettingsWindow, app: &App) {
         }
     });
     let handler = app.clone();
-    settings_window.on_save_settings(move |api_key, free_api, launch_at_startup| {
-        handler.save_settings(api_key.trim(), free_api, launch_at_startup);
+    settings_window.on_save_settings(move |api_key, free_api, launch_at_startup, language| {
+        handler.save_settings(
+            api_key.trim(),
+            free_api,
+            launch_at_startup,
+            i18n::InterfaceLanguage::from_index(language),
+        );
     });
     let handler = app.clone();
     settings_window.on_cancel_settings(move || handler.hide_settings());

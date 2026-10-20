@@ -9,15 +9,15 @@ use std::time::Duration;
 use slint::{ComponentHandle, LogicalSize, ModelRc, Timer, TimerMode, VecModel};
 
 use crate::deepl::{self, TranslateError, Translation};
+use crate::i18n::{self, InterfaceLanguage, Language};
 use crate::languages::{self, TargetLanguage};
+use crate::messages::Message;
 use crate::placement;
 use crate::settings::{self, Preferences};
 use crate::state::{self, AppState};
 use crate::windows_integration::{self, PopupAnchor, SelectionCapture};
 use crate::{MainWindow, SettingsWindow, TrayIcon};
 
-pub const PLACEHOLDER_TEXT: &str = "텍스트를 선택한 다음 Ctrl+F9를 누르세요.";
-const MISSING_KEY_MESSAGE: &str = "번역하려면 DeepL API 인증 키를 입력하세요.";
 pub const LOST_FOCUS_CLOSE_DELAY: Duration = Duration::from_millis(50);
 const OUTSIDE_CLICK_POLL_INTERVAL: Duration = Duration::from_millis(45);
 /// Lets the hidden window finish its last frame before memory is released.
@@ -80,7 +80,10 @@ impl App {
                 popup.set_error_visible(false);
                 if api_key_missing {
                     self.hide_popup();
-                    self.open_settings(capture.anchor, Some(MISSING_KEY_MESSAGE));
+                    self.open_settings(
+                        capture.anchor,
+                        Some(&Message::EnterApiKeyToTranslate.text()),
+                    );
                     return;
                 }
                 self.show_popup(capture.anchor);
@@ -89,7 +92,7 @@ impl App {
             Err(error) => {
                 self.request_serial.fetch_add(1, Ordering::SeqCst);
                 self.state().clear_source();
-                self.show_error("텍스트를 가져올 수 없습니다", &error, false);
+                self.show_error(&Message::CaptureFailedTitle.text(), &error, false);
                 self.show_popup(fallback_anchor);
             }
         }
@@ -122,7 +125,11 @@ impl App {
             return;
         }
         if api_key.trim().is_empty() {
-            self.show_error("DeepL API 인증 키가 필요합니다", MISSING_KEY_MESSAGE, true);
+            self.show_error(
+                &Message::ApiKeyRequiredTitle.text(),
+                &Message::EnterApiKeyToTranslate.text(),
+                true,
+            );
             return;
         }
         if let Some(translation) = cached {
@@ -171,7 +178,7 @@ impl App {
             Err(error) => {
                 let presentation = error.presentation();
                 self.show_error(
-                    presentation.title,
+                    &presentation.title,
                     &presentation.description,
                     presentation.needs_settings,
                 );
@@ -298,8 +305,8 @@ impl App {
         };
         let Some(owner_window) = placement::native_window_handle(popup.window()) else {
             self.show_error(
-                deepl::TRANSLATE_ERROR_TITLE,
-                "클립보드를 사용할 수 없습니다.",
+                &Message::TranslateFailedTitle.text(),
+                &Message::ClipboardUnavailable.text(),
                 false,
             );
             return;
@@ -428,6 +435,16 @@ impl App {
         window.set_size(LogicalSize::new(size.width, base_height + fit.extra));
     }
 
+    /// Shows the app's own text and the language names in `language`.
+    pub fn apply_interface_language(&self, language: Language) {
+        i18n::set(language);
+        self.state().relocalize_languages(language);
+        if let Some(popup) = self.popup.upgrade() {
+            popup.set_placeholder_text(Message::Placeholder.text().into());
+        }
+        self.refresh_language_ui();
+    }
+
     pub fn open_settings(&self, anchor: PopupAnchor, message: Option<&str>) {
         let Some(settings_window) = self.settings.upgrade() else {
             return;
@@ -436,6 +453,7 @@ impl App {
             let state = self.state();
             settings_window.set_api_key(state.api_key.as_str().into());
             settings_window.set_free_api(state.use_free_api);
+            settings_window.set_interface_language(state.interface_language.index());
         }
         settings_window.set_launch_at_startup(windows_integration::launch_at_startup());
         settings_window.set_message(message.unwrap_or_default().into());
@@ -457,12 +475,18 @@ impl App {
         self.sync_watchers();
     }
 
-    pub fn save_settings(&self, api_key: &str, free_api: bool, launch_at_startup: bool) {
+    pub fn save_settings(
+        &self,
+        api_key: &str,
+        free_api: bool,
+        launch_at_startup: bool,
+        interface_language: InterfaceLanguage,
+    ) {
         let Some(settings_window) = self.settings.upgrade() else {
             return;
         };
         if api_key.is_empty() {
-            settings_window.set_message("DeepL API 인증 키를 입력하세요.".into());
+            settings_window.set_message(Message::EnterApiKey.text().into());
             return;
         }
         // Rewriting the entry also keeps its path current if the app was moved.
@@ -474,11 +498,12 @@ impl App {
         let (previous, candidate) = {
             let state = self.state();
             let previous = state.preferences();
-            let candidate = Preferences::new(
+            let mut candidate = Preferences::new(
                 free_api,
                 previous.suggested_languages.clone(),
                 previous.target_languages.clone(),
             );
+            candidate.interface_language = interface_language;
             (previous, candidate)
         };
         if let Err(error) = candidate.save() {
@@ -488,9 +513,11 @@ impl App {
         if let Err(error) = settings::save_api_key(api_key) {
             let message = match previous.save() {
                 Ok(()) => error,
-                Err(rollback_error) => {
-                    format!("{error} 이전 설정도 복원하지 못했습니다: {rollback_error}")
+                Err(rollback_error) => Message::RollbackFailed {
+                    error,
+                    rollback_error,
                 }
+                .text(),
             };
             settings_window.set_message(message.into());
             return;
@@ -503,6 +530,7 @@ impl App {
             }
             state.api_key = api_key.to_owned();
             state.use_free_api = free_api;
+            state.interface_language = interface_language;
             (
                 !state.source_text.is_empty() && state.translation().is_none(),
                 state.last_anchor,
@@ -510,6 +538,10 @@ impl App {
         };
         settings_window.set_message("".into());
         self.hide_settings();
+        let language = interface_language.resolve();
+        if language != i18n::current() {
+            self.apply_interface_language(language);
+        }
         self.refresh_target_languages();
 
         if retranslate {

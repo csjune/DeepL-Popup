@@ -8,6 +8,8 @@ A Windows tray app that translates selected text in a popup. Select text in any 
 
 You need Windows 11 and a DeepL API key (Free or Pro). Enter the key in Settings from the tray menu.
 
+The interface is in English or Korean. It follows the Windows display language; you can pick one in Settings.
+
 | Key | Action |
 |---|---|
 | Ctrl+F9 | Translate the selected text |
@@ -23,6 +25,8 @@ The API key is stored in Windows Credential Manager, other settings in `%APPDATA
 ```powershell
 cargo build --release
 ```
+
+UI text is written in English in `ui/app.slint` with `@tr(...)`; the Korean translation is in `lang/ko/LC_MESSAGES/deepl-popup.po` and is built into the executable. Messages produced in Rust are in `src/messages.rs`.
 
 `tools\generate-icons.ps1` regenerates the icons and needs the [Galmuri14](https://github.com/quiple/galmuri) font installed.
 

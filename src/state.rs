@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use crate::LanguageItem;
+use crate::i18n::{self, InterfaceLanguage, Language};
 use crate::languages::{self, TargetLanguage};
 use crate::settings::Preferences;
 use crate::windows_integration::PopupAnchor;
@@ -26,6 +27,7 @@ pub struct AppState {
     pub last_anchor: PopupAnchor,
     /// Pixels the popup was moved up to make room for the open language list.
     pub menu_shift: i32,
+    pub interface_language: InterfaceLanguage,
 }
 
 impl AppState {
@@ -33,7 +35,8 @@ impl AppState {
         let languages = if preferences.target_languages.is_empty() {
             languages::fallback_languages()
         } else {
-            languages::prepare(preferences.target_languages)
+            // Loaded before the interface language was known, so name them again.
+            languages::relocalize(&preferences.target_languages, i18n::current())
         };
         let mut state = Self {
             api_key,
@@ -45,6 +48,7 @@ impl AppState {
             translations: HashMap::new(),
             last_anchor: anchor,
             menu_shift: 0,
+            interface_language: preferences.interface_language,
         };
         state.canonicalize_suggested();
         state
@@ -56,6 +60,11 @@ impl AppState {
             self.languages = languages;
             self.canonicalize_suggested();
         }
+    }
+
+    /// Renames the languages after the interface language changed.
+    pub fn relocalize_languages(&mut self, language: Language) {
+        self.set_languages(languages::relocalize(&self.languages, language));
     }
 
     pub fn find_language(&self, code: &str) -> Option<&TargetLanguage> {
@@ -173,11 +182,13 @@ impl AppState {
     }
 
     pub fn preferences(&self) -> Preferences {
-        Preferences::new(
+        let mut preferences = Preferences::new(
             self.use_free_api,
             self.suggested.clone(),
             self.languages.clone(),
-        )
+        );
+        preferences.interface_language = self.interface_language;
+        preferences
     }
 
     pub fn save_preferences(&self) {
@@ -255,7 +266,10 @@ mod tests {
                 scale_factor: 1.0,
             },
         };
-        AppState::new(String::new(), preferences, anchor)
+        // The tests check Korean names; `new` names them in the global language.
+        let mut state = AppState::new(String::new(), preferences, anchor);
+        state.relocalize_languages(Language::Korean);
+        state
     }
 
     #[test]

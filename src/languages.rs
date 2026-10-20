@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::i18n::{self, Language};
+
 /// Target languages shown before the DeepL language list has been fetched.
 const FALLBACK_LANGUAGES: [(&str, &str); 20] = [
     ("KO", "Korean"),
@@ -160,18 +162,26 @@ pub struct TargetLanguage {
     pub code: String,
     /// The name DeepL reports, in English.
     pub name: String,
-    /// The name shown in the UI: Korean when known, otherwise `name`.
+    /// The name shown in the UI, in the interface language: DeepL's English
+    /// name, or the Korean name when the interface is Korean and it is known.
     pub display_name: String,
 }
 
 impl TargetLanguage {
     pub fn new(code: impl Into<String>, name: impl Into<String>) -> Self {
+        Self::localized(code, name, i18n::current())
+    }
+
+    pub fn localized(code: impl Into<String>, name: impl Into<String>, language: Language) -> Self {
         let code = code.into();
         let name = name.into();
-        let display_name = KOREAN_NAMES
-            .iter()
-            .find(|(known, _)| known.eq_ignore_ascii_case(&code))
-            .map_or_else(|| name.clone(), |(_, korean)| (*korean).to_owned());
+        let korean = match language {
+            Language::Korean => KOREAN_NAMES
+                .iter()
+                .find(|(known, _)| known.eq_ignore_ascii_case(&code)),
+            Language::English => None,
+        };
+        let display_name = korean.map_or_else(|| name.clone(), |(_, korean)| (*korean).to_owned());
         Self {
             code,
             name,
@@ -207,6 +217,16 @@ pub fn fallback_languages() -> Vec<TargetLanguage> {
         FALLBACK_LANGUAGES
             .into_iter()
             .map(|(code, name)| TargetLanguage::new(code, name))
+            .collect(),
+    )
+}
+
+/// The same languages named and sorted for `language`.
+pub fn relocalize(languages: &[TargetLanguage], language: Language) -> Vec<TargetLanguage> {
+    prepare(
+        languages
+            .iter()
+            .map(|existing| TargetLanguage::localized(&existing.code, &existing.name, language))
             .collect(),
     )
 }
@@ -280,19 +300,37 @@ mod tests {
     }
 
     #[test]
-    fn known_languages_use_korean_names() {
-        assert_eq!(
-            TargetLanguage::new("en-US", "English (American)").display_name,
-            "영어(미국)"
-        );
-        assert_eq!(TargetLanguage::new("xx", "Unknown").display_name, "Unknown");
+    fn korean_interface_uses_korean_names_when_known() {
+        let korean =
+            |code, name| TargetLanguage::localized(code, name, Language::Korean).display_name;
+        assert_eq!(korean("en-US", "English (American)"), "영어(미국)");
+        assert_eq!(korean("xx", "Unknown"), "Unknown");
     }
 
     #[test]
-    fn stored_languages_get_their_display_name_back() {
-        let json = serde_json::to_string(&TargetLanguage::new("ja", "Japanese")).unwrap();
+    fn english_interface_uses_deepl_names() {
+        let language = TargetLanguage::localized("en-US", "English (American)", Language::English);
+        assert_eq!(language.display_name, "English (American)");
+    }
+
+    #[test]
+    fn relocalized_lists_are_renamed_and_resorted() {
+        let english = prepare(vec![
+            TargetLanguage::localized("ko", "Korean", Language::English),
+            TargetLanguage::localized("de", "German", Language::English),
+        ]);
+        let korean = relocalize(&english, Language::Korean);
+        let names = korean
+            .iter()
+            .map(|language| language.display_name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(names, ["독일어", "한국어"]);
+    }
+
+    #[test]
+    fn stored_languages_keep_only_the_deepl_name() {
+        let language = TargetLanguage::localized("ja", "Japanese", Language::Korean);
+        let json = serde_json::to_string(&language).unwrap();
         assert_eq!(json, r#"{"code":"ja","name":"Japanese"}"#);
-        let language: TargetLanguage = serde_json::from_str(&json).unwrap();
-        assert_eq!(language.display_name, "일본어");
     }
 }

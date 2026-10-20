@@ -70,6 +70,7 @@ mod platform {
     use windows::core::{PCWSTR, w};
 
     use super::{PopupAnchor, SelectionCapture, WorkArea};
+    use crate::messages::Message;
 
     const HOTKEY_ID: i32 = 0x4450;
     const SLINT_TRAY_MESSAGE: u32 = WM_APP + 1;
@@ -158,27 +159,25 @@ mod platform {
     }
 
     pub fn set_launch_at_startup(enabled: bool) -> Result<(), String> {
-        const FAILED: &str = "시작 시 자동 실행 설정을 바꾸지 못했습니다.";
+        let failed = || Message::LaunchAtStartupFailed.text();
 
         // A stale approval entry would keep the new registration disabled.
-        let cleared = unsafe {
-            RegDeleteKeyValueW(HKEY_CURRENT_USER, STARTUP_APPROVED_KEY, STARTUP_VALUE)
-        };
+        let cleared =
+            unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, STARTUP_APPROVED_KEY, STARTUP_VALUE) };
         if cleared != ERROR_SUCCESS && cleared != ERROR_FILE_NOT_FOUND {
-            return Err(FAILED.to_owned());
+            return Err(failed());
         }
 
         if !enabled {
-            let removed =
-                unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, RUN_KEY, STARTUP_VALUE) };
+            let removed = unsafe { RegDeleteKeyValueW(HKEY_CURRENT_USER, RUN_KEY, STARTUP_VALUE) };
             return if removed == ERROR_SUCCESS || removed == ERROR_FILE_NOT_FOUND {
                 Ok(())
             } else {
-                Err(FAILED.to_owned())
+                Err(failed())
             };
         }
 
-        let exe = std::env::current_exe().map_err(|_| FAILED.to_owned())?;
+        let exe = std::env::current_exe().map_err(|_| failed())?;
         let command: Vec<u16> = format!("\"{}\"", exe.display())
             .encode_utf16()
             .chain(Some(0))
@@ -196,7 +195,7 @@ mod platform {
         if written == ERROR_SUCCESS {
             Ok(())
         } else {
-            Err(FAILED.to_owned())
+            Err(failed())
         }
     }
 
@@ -334,9 +333,10 @@ mod platform {
                 if let Err(error) = unsafe {
                     RegisterHotKey(None, HOTKEY_ID, MOD_CONTROL | MOD_NOREPEAT, VK_F9.0 as u32)
                 } {
-                    let _ = ready_sender.send(Err(format!(
-                        "Ctrl+F9 단축키를 등록하지 못했습니다. 다른 앱(DeepL 등)이 사용 중인지 확인하세요. ({error})"
-                    )));
+                    let _ = ready_sender.send(Err(Message::HotkeyRegistrationFailed {
+                        error: error.to_string(),
+                    }
+                    .text()));
                     return;
                 }
 
@@ -382,7 +382,7 @@ mod platform {
     pub fn capture_selected_text() -> Result<SelectionCapture, String> {
         let source_window = unsafe { GetForegroundWindow() };
         if source_window.is_invalid() {
-            return Err("활성 창을 찾지 못했습니다.".to_owned());
+            return Err(Message::NoActiveWindow.text());
         }
         let anchor = current_anchor();
         let sequence_number = unsafe { GetClipboardSequenceNumber() };
@@ -398,7 +398,7 @@ mod platform {
             wait_for_new_clipboard_text(sequence_number, Duration::from_millis(900))
         })?;
         if text.trim().is_empty() {
-            return Err("선택한 텍스트가 없습니다.".to_owned());
+            return Err(Message::NoSelectedText.text());
         }
 
         Ok(SelectionCapture {
@@ -414,18 +414,18 @@ mod platform {
         text: &str,
     ) -> Result<(), String> {
         if text.is_empty() {
-            return Err("원문을 대체할 번역문이 없습니다.".to_owned());
+            return Err(Message::NoTranslationToReplace.text());
         }
 
         let source_window = HWND(source_window as *mut c_void);
         if unsafe { IsWindow(Some(source_window)) }.0 == 0 {
-            return Err("원문이 있던 창이 닫혀서 대체할 수 없습니다.".to_owned());
+            return Err(Message::SourceWindowClosed.text());
         }
 
         set_clipboard_text(owner_window, text)?;
 
         if unsafe { SetForegroundWindow(source_window) }.0 == 0 {
-            return Err("원문이 있던 창으로 돌아가지 못했습니다.".to_owned());
+            return Err(Message::SourceWindowUnreachable.text());
         }
         thread::sleep(Duration::from_millis(90));
         send_shortcut(VK_V)?;
@@ -438,7 +438,7 @@ mod platform {
         thread::sleep(PASTE_CHECK_DELAY);
         match read_clipboard_text() {
             Ok(Some(copied)) if !paste_succeeded(&copied, text) => {
-                Err("원문은 편집할 수 없으므로 대체할 수 없습니다.".to_owned())
+                Err(Message::SourceReadOnly.text())
             }
             _ => Ok(()),
         }
@@ -570,7 +570,7 @@ mod platform {
         if sent == inputs.len() as u32 {
             Ok(())
         } else {
-            Err("Failed to send keyboard input to the selection.".to_owned())
+            Err(Message::KeyboardInputFailed.text())
         }
     }
 
@@ -592,12 +592,9 @@ mod platform {
         }
 
         if clipboard_changed {
-            Err("선택한 내용이 텍스트가 아닙니다.".to_owned())
+            Err(Message::SelectionNotText.text())
         } else {
-            Err(
-                "선택한 텍스트를 가져오지 못했습니다. 텍스트를 선택한 다음 다시 시도하세요."
-                    .to_owned(),
-            )
+            Err(Message::SelectionUnavailable.text())
         }
     }
 
@@ -610,12 +607,12 @@ mod platform {
             }
             thread::sleep(CLIPBOARD_RETRY_DELAY);
         }
-        Err(format!(
-            "Failed to open the clipboard: {}",
-            last_error
+        Err(Message::ClipboardFailed {
+            error: last_error
                 .map(|error| error.to_string())
-                .unwrap_or_else(|| "Unknown error".to_owned())
-        ))
+                .unwrap_or_default(),
+        }
+        .text())
     }
 
     fn read_clipboard_text() -> Result<Option<String>, String> {
@@ -626,7 +623,7 @@ mod platform {
         let global = HGLOBAL(handle.0);
         let pointer = unsafe { GlobalLock(global) } as *const u16;
         if pointer.is_null() {
-            return Err("Failed to read clipboard text.".to_owned());
+            return Err(clipboard_failed(""));
         }
 
         let units = unsafe { GlobalSize(global) } / mem::size_of::<u16>();
@@ -639,22 +636,29 @@ mod platform {
         Ok(Some(text))
     }
 
+    fn clipboard_failed(error: impl ToString) -> String {
+        Message::ClipboardFailed {
+            error: error.to_string(),
+        }
+        .text()
+    }
+
     fn set_clipboard_text(owner_window: isize, text: &str) -> Result<(), String> {
         let owner_window = HWND(owner_window as *mut c_void);
         if unsafe { IsWindow(Some(owner_window)) }.0 == 0 {
-            return Err("The clipboard owner window is no longer available.".to_owned());
+            return Err(Message::ClipboardUnavailable.text());
         }
         let encoded: Vec<u16> = text.encode_utf16().chain(Some(0)).collect();
         let byte_count = encoded.len() * mem::size_of::<u16>();
         let bytes = unsafe { slice::from_raw_parts(encoded.as_ptr().cast::<u8>(), byte_count) };
-        let global = unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes.len()) }
-            .map_err(|error| format!("Failed to allocate clipboard memory: {error}"))?;
+        let global =
+            unsafe { GlobalAlloc(GMEM_MOVEABLE, bytes.len()) }.map_err(clipboard_failed)?;
         let target = unsafe { GlobalLock(global) } as *mut u8;
         if target.is_null() {
             unsafe {
                 let _ = GlobalFree(Some(global));
             }
-            return Err("Failed to lock clipboard memory.".to_owned());
+            return Err(clipboard_failed(""));
         }
 
         unsafe {
@@ -676,14 +680,14 @@ mod platform {
             unsafe {
                 let _ = GlobalFree(Some(global));
             }
-            return Err(format!("Failed to clear the clipboard: {error}"));
+            return Err(clipboard_failed(error));
         }
 
         if let Err(error) = unsafe { SetClipboardData(CF_UNICODETEXT, Some(HANDLE(global.0))) } {
             unsafe {
                 let _ = GlobalFree(Some(global));
             }
-            return Err(format!("Failed to set clipboard data: {error}"));
+            return Err(clipboard_failed(error));
         }
 
         Ok(())
@@ -693,6 +697,7 @@ mod platform {
 #[cfg(not(windows))]
 mod platform {
     use super::{PopupAnchor, SelectionCapture, WorkArea};
+    use crate::messages::Message;
 
     pub struct HotkeyListener;
 
@@ -768,15 +773,15 @@ mod platform {
     }
 
     pub fn set_launch_at_startup(_enabled: bool) -> Result<(), String> {
-        Err("이 플랫폼에서는 시작 시 자동 실행을 지원하지 않습니다.".to_owned())
+        Err(Message::LaunchAtStartupUnsupported.text())
     }
 }
 
 pub use platform::{
     bring_to_foreground, copy_text, current_anchor, cursor_is_in_rect, launch_at_startup,
     left_button_down, replace_selected_text, set_launch_at_startup, show_tray_menu,
-    small_icon_size, start_hotkey_listener, trim_working_set, watch_theme_changes, windows_app_dark_mode,
-    windows_system_dark_mode,
+    small_icon_size, start_hotkey_listener, trim_working_set, watch_theme_changes,
+    windows_app_dark_mode, windows_system_dark_mode,
 };
 
 #[cfg(all(test, windows))]

@@ -372,7 +372,7 @@ component DropdownTrigger inherits Rectangle {
         ? Theme.disabled-bg
         : root.open ? Theme.active-bg : (touch.has-hover ? Theme.basic-bg-hover : Theme.basic-bg);
     accessible-role: combobox;
-    accessible-label: "번역할 언어";
+    accessible-label: @tr("Target language");
     accessible-value: root.label;
     accessible-expandable: true;
     accessible-expanded: root.open;
@@ -428,7 +428,7 @@ component SearchBox inherits Rectangle {
         }
 
         Text {
-            text: "언어 검색";
+            text: @tr("Search languages");
             color: Theme.text-muted;
             font-size: 14px;
             vertical-alignment: center;
@@ -444,7 +444,7 @@ component SearchBox inherits Rectangle {
         font-size: 14px;
         vertical-alignment: center;
         single-line: true;
-        accessible-label: "언어 검색";
+        accessible-label: @tr("Search languages");
         accepted => { root.accepted(); }
     }
 }
@@ -699,7 +699,7 @@ export component MainWindow inherits Window {
                 HorizontalLayout {
                     TabStrip {
                         icon: "\u{E8C1}";
-                        label: "번역";
+                        label: @tr("Translate");
                     }
 
                     Rectangle {
@@ -711,8 +711,8 @@ export component MainWindow inherits Window {
 
                         settings-button := IconButton {
                             icon: "\u{E713}";
-                            hint: "설정";
-                            tooltip: "설정";
+                            hint: @tr("Settings");
+                            tooltip: @tr("Settings");
                             clicked => { root.settings-requested(); }
                         }
                     }
@@ -726,7 +726,7 @@ export component MainWindow inherits Window {
 
                         IconButton {
                             icon: "\u{E711}";
-                            hint: "닫기";
+                            hint: @tr("Close");
                             clicked => { root.hide-requested(); }
                         }
                     }
@@ -737,7 +737,7 @@ export component MainWindow inherits Window {
                         label: root.selected-language-name;
                         open: root.menu-open;
                         enabled: !root.error-visible;
-                        tooltip: "스페이스 바를 눌러 언어를 선택합니다";
+                        tooltip: @tr("Press Space to choose a language");
                         clicked => {
                             if root.menu-open {
                                 root.close-menu();
@@ -778,7 +778,7 @@ export component MainWindow inherits Window {
                             wrap: word-wrap;
                             color: Theme.text;
                             font-size: 14px;
-                            accessible-label: "번역 결과";
+                            accessible-label: @tr("Translation");
                         }
                     }
 
@@ -850,12 +850,12 @@ export component MainWindow inherits Window {
                         spacing: 8px;
 
                         ActionButton {
-                            label: "다시 시도";
+                            label: @tr("Try again");
                             clicked => { root.retry-requested(); }
                         }
 
                         if root.error-show-settings: ActionButton {
-                            label: "설정 열기";
+                            label: @tr("Open settings");
                             clicked => { root.settings-requested(); }
                         }
                     }
@@ -863,10 +863,10 @@ export component MainWindow inherits Window {
 
                 if !root.error-visible: HorizontalLayout {
                     ActionButton {
-                        label: "복사";
+                        label: @tr("Copy");
                         icon: "\u{E8C8}";
                         enabled: root.actions-enabled;
-                        tooltip: "클릭 또는 바로 가기 키로 번역문 복사하기";
+                        tooltip: @tr("Copy the translation (click or shortcut)");
                         tooltip-key: "C";
                         clicked => { root.copy-requested(); }
                     }
@@ -876,11 +876,11 @@ export component MainWindow inherits Window {
                     }
 
                     ActionButton {
-                        label: "바꾸기";
+                        label: @tr("Replace");
                         icon: "\u{E8AB}";
                         primary: true;
                         enabled: root.actions-enabled;
-                        tooltip: "클릭 또는 바로 가기 키로 원문 대체하기";
+                        tooltip: @tr("Replace the original text (click or shortcut)");
                         tooltip-key: "R";
                         tooltip-align-right: true;
                         clicked => { root.replace-requested(); }
@@ -987,7 +987,7 @@ export component MainWindow inherits Window {
                         padding-bottom: 8px;
 
                         if root.recommended-languages.length > 0: GroupHeader {
-                            label: "추천 언어";
+                            label: @tr("Suggested languages");
                         }
 
                         for language in root.recommended-languages: LanguageRow {
@@ -997,7 +997,7 @@ export component MainWindow inherits Window {
                         }
 
                         if root.all-languages.length > 0: GroupHeader {
-                            label: "모든 언어";
+                            label: @tr("All languages");
                         }
 
                         for language in root.all-languages: LanguageRow {
@@ -1052,14 +1052,16 @@ component SegmentButton inherits Rectangle {
     in property <string> label;
     in property <bool> checked;
     in property <bool> first;
+    in property <bool> last;
     callback clicked();
 
     height: 32px;
-    min-width: 64px;
+    // Room for the label in bold too, so the width does not jump when checked.
+    min-width: max(64px, label-text.preferred-width + 28px);
     border-top-left-radius: root.first ? 6px : 0px;
     border-bottom-left-radius: root.first ? 6px : 0px;
-    border-top-right-radius: root.first ? 0px : 6px;
-    border-bottom-right-radius: root.first ? 0px : 6px;
+    border-top-right-radius: root.last ? 6px : 0px;
+    border-bottom-right-radius: root.last ? 6px : 0px;
     border-width: root.checked ? 0px : 1px;
     border-color: touch.has-hover ? Theme.basic-border-hover : Theme.basic-border;
     background: root.checked
@@ -1071,7 +1073,7 @@ component SegmentButton inherits Rectangle {
     accessible-checked: root.checked;
     accessible-action-default => { root.clicked(); }
 
-    Text {
+    label-text := Text {
         text: root.label;
         color: root.checked ? Theme.primary-text : Theme.text;
         font-size: 14px;
@@ -1139,15 +1141,116 @@ component ToggleSwitch inherits Rectangle {
     }
 }
 
+/// A closed box showing the chosen option; the options open in a list below it.
+component SelectBox inherits Rectangle {
+    in property <[string]> options;
+    in-out property <int> current-index;
+    in property <string> name;
+
+    height: 36px;
+    width: 180px;
+    border-radius: 6px;
+    border-width: 1px;
+    border-color: touch.has-hover ? Theme.basic-border-hover : Theme.basic-border;
+    background: touch.pressed ? Theme.basic-bg-pressed : (touch.has-hover ? Theme.basic-bg-hover : Theme.basic-bg);
+    accessible-role: combobox;
+    accessible-label: root.name;
+    accessible-value: root.options[root.current-index];
+    accessible-expandable: true;
+    accessible-action-default => { list.show(); }
+
+    HorizontalLayout {
+        padding-left: 12px;
+        padding-right: 10px;
+        spacing: 6px;
+
+        Text {
+            text: root.options[root.current-index];
+            color: Theme.text;
+            font-size: 14px;
+            vertical-alignment: center;
+            horizontal-stretch: 1;
+            accessible-role: none;
+        }
+
+        Glyph {
+            text: "\u{E70D}";
+            color: Theme.text;
+            font-size: 12px;
+        }
+    }
+
+    touch := TouchArea {
+        clicked => { list.show(); }
+    }
+
+    list := PopupWindow {
+        x: 0;
+        y: root.height + 4px;
+        width: root.width;
+
+        Rectangle {
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: Theme.basic-border;
+            background: Theme.surface;
+            drop-shadow-blur: 8px;
+            drop-shadow-color: Theme.card-shadow;
+
+            VerticalLayout {
+                padding: 4px;
+
+                for option[index] in root.options: Rectangle {
+                    height: 32px;
+                    border-radius: 4px;
+                    background: index == root.current-index
+                        ? Theme.active-bg
+                        : (item-touch.has-hover ? Theme.item-hover : transparent);
+                    accessible-role: list-item;
+                    accessible-label: option;
+                    accessible-item-selectable: true;
+                    accessible-item-selected: index == root.current-index;
+
+                    HorizontalLayout {
+                        padding-left: 6px;
+                        padding-right: 8px;
+                        spacing: 4px;
+
+                        Glyph {
+                            text: index == root.current-index ? "\u{E73E}" : "";
+                            color: Theme.text;
+                            font-size: 14px;
+                        }
+
+                        Text {
+                            text: option;
+                            color: Theme.text;
+                            font-size: 14px;
+                            vertical-alignment: center;
+                            accessible-role: none;
+                        }
+                    }
+
+                    item-touch := TouchArea {
+                        clicked => { root.current-index = index; }
+                    }
+                }
+            }
+        }
+    }
+}
+
 export component SettingsWindow inherits Window {
     in-out property <string> api-key;
     in-out property <bool> free-api: true;
     in-out property <bool> launch-at-startup;
+    // Index into InterfaceLanguage::ALL: system, English, Korean.
+    in-out property <int> interface-language;
     in property <string> message;
     in property <bool> dark-mode;
     in property <string> version;
 
-    callback save-settings(string, bool, bool);
+    callback save-settings(string, bool, bool, int);
     callback cancel-settings();
     callback drag-requested();
 
@@ -1156,13 +1259,13 @@ export component SettingsWindow inherits Window {
     }
 
     function save() {
-        root.save-settings(root.api-key, root.free-api, root.launch-at-startup);
+        root.save-settings(root.api-key, root.free-api, root.launch-at-startup, root.interface-language);
     }
 
-    title: "DeepL Popup 설정";
+    title: @tr("DeepL Popup Settings");
     icon: root.dark-mode ? @image-url("../assets/icon-dark.png") : @image-url("../assets/icon-light.png");
     width: 460px;
-    height: 440px;
+    height: 512px;
     no-frame: true;
     always-on-top: true;
     background: transparent;
@@ -1210,7 +1313,7 @@ export component SettingsWindow inherits Window {
 
                 HorizontalLayout {
                     Text {
-                        text: "설정";
+                        text: @tr("Settings");
                         color: Theme.text;
                         font-size: 20px;
                         font-weight: 600;
@@ -1226,7 +1329,7 @@ export component SettingsWindow inherits Window {
 
                         IconButton {
                             icon: "\u{E711}";
-                            hint: "닫기";
+                            hint: @tr("Close");
                             clicked => { root.cancel-settings(); }
                         }
                     }
@@ -1235,7 +1338,7 @@ export component SettingsWindow inherits Window {
                 Rectangle { height: 16px; }
 
                 Text {
-                    text: "DeepL API 인증 키";
+                    text: @tr("DeepL API key");
                     color: Theme.text;
                     font-size: 14px;
                     font-weight: 600;
@@ -1245,7 +1348,7 @@ export component SettingsWindow inherits Window {
 
                 key-input := TextField {
                     text <=> root.api-key;
-                    placeholder: "인증 키를 입력하세요";
+                    placeholder: @tr("Enter your API key");
                     password: true;
                     accepted => { root.save(); }
                 }
@@ -1253,7 +1356,7 @@ export component SettingsWindow inherits Window {
                 Rectangle { height: 16px; }
 
                 Text {
-                    text: "API 플랜";
+                    text: @tr("API plan");
                     color: Theme.text;
                     font-size: 14px;
                     font-weight: 600;
@@ -1273,7 +1376,7 @@ export component SettingsWindow inherits Window {
 
                     SegmentButton {
                         label: "Pro";
-                        first: false;
+                        last: true;
                         checked: !root.free-api;
                         clicked => { root.free-api = false; }
                     }
@@ -1282,7 +1385,7 @@ export component SettingsWindow inherits Window {
                 Rectangle { height: 12px; }
 
                 Text {
-                    text: "인증 키는 Windows 자격 증명 관리자에 저장되고, 선택한 텍스트는 DeepL API로 전송됩니다.";
+                    text: @tr("The key is stored in Windows Credential Manager. Selected text is sent to the DeepL API.");
                     color: Theme.text-muted;
                     font-size: 12px;
                     wrap: word-wrap;
@@ -1291,7 +1394,7 @@ export component SettingsWindow inherits Window {
                 Rectangle { height: 16px; }
 
                 Text {
-                    text: "시작";
+                    text: @tr("Startup");
                     color: Theme.text;
                     font-size: 14px;
                     font-weight: 600;
@@ -1300,10 +1403,31 @@ export component SettingsWindow inherits Window {
                 Rectangle { height: 6px; }
 
                 ToggleSwitch {
-                    label: "Windows 시작 시 자동 실행";
+                    label: @tr("Launch at Windows startup");
                     checked <=> root.launch-at-startup;
                 }
 
+                Rectangle { height: 16px; }
+
+                Text {
+                    text: @tr("Interface language");
+                    color: Theme.text;
+                    font-size: 14px;
+                    font-weight: 600;
+                }
+
+                Rectangle { height: 6px; }
+
+                // Language names are written in their own language so anyone can find theirs.
+                HorizontalLayout {
+                    alignment: start;
+
+                    SelectBox {
+                        name: @tr("Interface language");
+                        options: [@tr("System"), "English", "한국어"];
+                        current-index <=> root.interface-language;
+                    }
+                }
                 Rectangle {
                     vertical-stretch: 1;
                     min-height: 8px;
@@ -1333,12 +1457,12 @@ export component SettingsWindow inherits Window {
                     }
 
                     ActionButton {
-                        label: "취소";
+                        label: @tr("Cancel");
                         clicked => { root.cancel-settings(); }
                     }
 
                     ActionButton {
-                        label: "저장";
+                        label: @tr("Save");
                         primary: true;
                         clicked => { root.save(); }
                     }
@@ -1380,19 +1504,19 @@ export component TrayIcon inherits SystemTrayIcon {
 
     Menu {
         MenuItem {
-            title: "열기";
+            title: @tr("Open");
             activated => { root.open-requested(); }
         }
 
         MenuItem {
-            title: "설정";
+            title: @tr("Settings");
             activated => { root.settings-requested(); }
         }
 
         MenuSeparator {}
 
         MenuItem {
-            title: "종료";
+            title: @tr("Quit");
             activated => { root.quit-requested(); }
         }
     }
